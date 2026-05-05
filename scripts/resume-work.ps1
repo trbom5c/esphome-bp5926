@@ -30,6 +30,9 @@ $bootstrapScript = Join-Path $PSScriptRoot "bootstrap.ps1"
 $devScript = Join-Path $PSScriptRoot "dev.ps1"
 $resumePromptPath = Join-Path $repoRoot ".Codex\memory\resume-prompt.md"
 $resumeCheckpointPath = Join-Path $repoRoot ".Codex\memory\resume-checkpoint.md"
+$defaultLocalExcludePatterns = @(
+  "files-for-chat/"
+)
 
 function Invoke-NativeOrThrow {
   param(
@@ -65,9 +68,58 @@ function Invoke-NativeOrThrow {
   return $capturedOutput
 }
 
+function Ensure-LocalExcludePatterns {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$Patterns
+  )
+
+  if (-not $Patterns -or $Patterns.Count -eq 0) {
+    return
+  }
+
+  $gitCommonDir = (git rev-parse --git-common-dir).Trim()
+  if (-not $gitCommonDir) {
+    throw "Could not determine git common directory for local excludes."
+  }
+
+  $excludePath = Join-Path $gitCommonDir "info\exclude"
+  $excludeDir = Split-Path -Parent $excludePath
+  if (-not (Test-Path -LiteralPath $excludeDir)) {
+    New-Item -ItemType Directory -Path $excludeDir -Force | Out-Null
+  }
+
+  $existingPatterns = @()
+  if (Test-Path -LiteralPath $excludePath) {
+    $existingPatterns = @(Get-Content -LiteralPath $excludePath)
+  }
+
+  $addedPatterns = @()
+  foreach ($pattern in $Patterns) {
+    if (-not $pattern) {
+      continue
+    }
+
+    if ($existingPatterns -notcontains $pattern) {
+      Add-Content -LiteralPath $excludePath -Value $pattern
+      $existingPatterns += $pattern
+      $addedPatterns += $pattern
+    }
+  }
+
+  if ($addedPatterns.Count -gt 0) {
+    Write-Host "Applied local-only git exclude patterns:" -ForegroundColor Cyan
+    foreach ($pattern in $addedPatterns) {
+      Write-Host "  $pattern" -ForegroundColor Cyan
+    }
+  }
+}
+
 Set-Location $repoRoot
 
 Write-Host "Resume automation starting in $repoRoot" -ForegroundColor Cyan
+
+Ensure-LocalExcludePatterns -Patterns $defaultLocalExcludePatterns
 
 if (-not $SkipWorkspaceCompare -and (Test-Path -LiteralPath $compareScript)) {
   Write-Host ""
